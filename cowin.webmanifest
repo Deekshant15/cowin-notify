@@ -34,7 +34,7 @@
         "sizes": "512x512"
       }
     ],
-    "start_url": "http://localhost/Project/Cowin/Cowin.html",
+    "start_url": "https://deekshant15.github.io/cowin-notify/",
     "display": "minimal-ui",
     "theme_color": "#fff",
     "background_color": "#fff"
