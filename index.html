@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cowin Vaccine Notifier</title>
+    <link rel="shortcut icon" type="image/svg+xml" href="icon-syringe.svg" />
+    <link rel="manifest" href="cowin.webmanifest" />
+    <link rel="stylesheet" href="app.css" />
+    <style>
+        body {
+            font: normal 1em sans-serif;
+        }
+
+        .center {
+            margin-top: 20px;
+        }
+
+        .row {
+            margin: 10px auto;
+        }
+
+        select,
+        input[type="date"] {
+            padding: 5px;
+        }
+
+        table {
+            position: relative;
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        table th {
+            position: sticky;
+            top: 0;
+            background: #fff;
+        }
+
+        #result {
+            min-height: calc(100vh - 300px);
+        }
+
+        #result td {
+            max-width: 400px;
+            padding: 5px;
+        }
+
+        td.empty {
+            height: 480px;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: red;
+        }
+
+        #result tr:nth-of-type(2n+1) {
+            background: #ddd;
+        }
+
+        .vaccine {
+            text-align: center;
+            padding: 5px;
+        }
+
+        .vaccine>div:nth-child(1) {
+            margin: auto;
+            width: 60px;
+            padding: 5px;
+            font-weight: bold;
+            border-radius: 10px;
+        }
+
+        .vaccine>div:nth-child(3),
+        .vaccine>div:nth-child(4) {
+            font-size: smaller;
+        }
+
+        .vaccine>div:nth-child(4) {
+            color: red;
+        }
+
+        .vaccine .red {
+            color: white;
+            background: red;
+        }
+
+        .vaccine .green {
+            color: white;
+            background: green;
+        }
+
+        #total-centers{
+            font-size: 1.2em;
+            text-align: left;
+            align-self: center;
+        }
+    </style>
+    <script>
+        const title = 'Vaccine Update';
+        const icon = 'icon-syringe512.png';
+        var syncData = [];
+        var msgQ = [];
+        var timer = false;
+        var notifyTimer = false;
+        const urls = {
+            state_list: "https://cdn-api.co-vin.in/api/v2/admin/location/states",
+            dist_list: "https://cdn-api.co-vin.in/api/v2/admin/location/districts/5",
+            center_list: "https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/calendarByDistrict?"
+        };
+
+        const getCurrentDate = (iso = false) => {
+            let d = new Date(Date.now());// + 24 * 60 * 60 * 1000);
+            let mm = d.getMonth() + 1;
+            mm = mm < 10 ? '0' + mm : mm;
+            let dd = d.getDate();
+            dd = dd < 10 ? '0' + dd : dd;
+            
+            return iso ? `${d.getFullYear()}-${mm}-${dd}` : `${dd}-${mm}-${d.getFullYear()}`;
+        };
+
+        const addData = (d) => {
+            let dlist = syncData.map(v => v.dist);
+            let id = d.dist;
+            let cid = d.cid;
+            if (dlist.includes(id)) {
+                for (let o of syncData) {
+                    if (o.dist == id) {
+                        if (!o.centers.includes(cid)) {
+                            o.centers.push(cid);
+                        }
+                    }
+                }
+            }
+            else {
+                syncData.push({ dist: id, centers: [cid] });
+            }
+            localStorage.setItem('centers', JSON.stringify(syncData));
+        };
+
+        const clearData = () => {
+            clearTimer();
+            syncData = [];
+            localStorage.removeItem('centers');
+            updateCount();
+        };
+
+        const clearTimer = () => {
+            if (notifyTimer) {
+                clearInterval(notifyTimer);
+            }
+
+            if (timer) {
+                clearInterval(timer);
+                timer = false;
+            }
+        };
+
+        const showData = (ds) => {
+            for (let c of ds) {
+                let name = c.name + ' ' + c.district_name + ' - ' + c.pincode;
+                for (let s of c.sessions) {
+                    if (s.available_capacity > 0) {
+                        let text = `${name} has ${s.available_capacity} ${s.vaccine} dose available.`;
+                        let tagid = c.center_id + c.vaccine;
+                        msgQ.unshift({ body: text, renotify: true, tag: tagid });
+                    }
+                }
+            }
+        };
+
+        const showNotification = async () => {
+            if (msgQ.length == 0) {
+                return;
+            }
+
+            const notification = await new Notification(title, msgQ.pop());
+            notification.addEventListener('click', e => {
+                window.open('https://selfregistration.cowin.gov.in/');
+            });
+
+        };
+
+        const checkBooking = () => {
+            let date = getCurrentDate();
+            syncData.forEach(o => {
+                fetch(urls.center_list + `district_id=${o.dist}&date=${date}`, { cache: "no-store" }).then(r => r.json()).then(d => {
+                    if ('centers' in d) {
+                        let cd = [];
+                        for (let c of d.centers) {
+                            if (o.centers.includes(c.center_id)) {
+                                c.sessions = c.sessions.filter(s => s.min_age_limit == 18);
+                                if (c.sessions.length > 0 && c.fee_type.toLowerCase() == 'free') {
+                                    cd.push(c);
+                                }
+                            }
+                        }
+
+                        if (cd.length > 0) {
+                            showData(cd);
+                        }
+                    }
+                    else {
+                        console.log(d);
+                    }
+                }).catch(e => {
+                    console.log(e);
+                });
+            });
+            console.log('Service is running', new Date());
+        };
+
+        const startTimer = () => {
+            try {
+                if(syncData.length == 0){
+                    return;
+                }
+
+                if(!timer){
+                    notifyTimer = setInterval(showNotification, 10000);
+                    timer = setInterval(checkBooking, 60000);
+                    console.log('Timer Activated');
+                }
+
+            } catch (err) {
+                console.log('Error', err);
+            }
+        };
+
+        const requestNotificationPermission = async () => {
+            const permission = await window.Notification.requestPermission();
+            if (permission !== 'granted') {
+                throw new Error('Permission not granted for Notification');
+            }
+        };
+
+        const state_id = 5; //Bihar
+
+        const updateCount = () => {
+            let i = 0;
+            syncData.forEach(d => i += d.centers.length);
+            document.getElementById('total-centers').innerHTML = `Total centers saved for notification: <b>${i}</b>`;
+        };
+
+        const initialize = () => {
+            requestNotificationPermission();
+            let data = localStorage.getItem('centers');
+            if(data){
+                syncData = JSON.parse(data);
+                startTimer();
+            }
+            updateCount();
+            load_dist();
+        };
+
+        function load_dist() {
+            document.getElementById('book_date').value = getCurrentDate(true);
+            fetch(urls.dist_list).then(r => r.json()).then(d => {
+                let dists = d.districts;
+                let select = document.getElementById('dist_list');
+                for (let dist of dists) {
+                    let op = document.createElement('option');
+                    op.value = dist.district_id;
+                    op.innerHTML = dist.district_name;
+                    select.appendChild(op);
+                }
+            });
+        }
+
+        function parseCenterDetail(d) {
+            return `<b>${d.name}</b><br>${d.address}, ${d.block_name}, ${d.district_name}, ${d.state_name} - ${d.pincode}`;
+        }
+
+        function parseVaccineDetail(s) {
+            let cp = s.available_capacity;
+            let btc = cp > 0 ? 'green' : 'red';
+            return `<div class="vaccine"><div class="${btc}">${cp > 0 ? cp : 'Booked'}</div><div>${s.vaccine}</div><div>Dose1: ${s.available_capacity_dose1} | Dose2: ${s.available_capacity_dose2}</div><div>Age ${s.min_age_limit}+</div></div>`;
+        }
+
+        function writeCenterData(centers) {
+            let only_18 = document.getElementById('only_18').checked;
+            let tbody = document.getElementById('result');
+            while (tbody.lastChild) {
+                tbody.removeChild(tbody.lastChild);
+            }
+
+            let empty = true;
+
+            if(centers.length > 0){
+                let sn = 1;
+                for (let c of centers) {
+                    if (only_18) {
+                        c.sessions = c.sessions.filter(s => s.min_age_limit == 18);
+                    }
+
+                    if (c.sessions.length > 0 && c.fee_type.toLowerCase() == 'free') {
+                        let row = tbody.insertRow(-1);
+                        row.insertCell(-1).innerHTML = sn++;
+                        row.insertCell(-1).innerHTML = parseCenterDetail(c);
+                        row.insertCell(-1).innerHTML = c.sessions.reduce((acc, cur) => acc + parseVaccineDetail(cur), '');
+                        row.insertCell(-1).innerHTML = `<button onclick="register(${c.center_id});">Get Notified</button>`;
+                        empty = false;
+                    }
+                }
+            }
+            
+            if(empty){
+                let row = tbody.insertRow(-1);
+                let cell = row.insertCell(-1);
+                cell.className = 'empty';
+                cell.setAttribute('colspan', 4);
+                cell.innerHTML = 'Vaccine center not found for given date';
+            }
+            
+        }
+
+        function search() {
+            let dist = document.getElementById('dist_list').value;
+            let date = document.getElementById('book_date').value.split('-').reverse().join('-');
+            fetch(urls.center_list + `district_id=${dist}&date=${date}`).then(r => r.json()).then(data => {
+                if ('centers' in data) {
+                    writeCenterData(data.centers);
+                }
+            });
+        }
+
+        function register(center_id) {
+            let dist = parseInt(document.getElementById('dist_list').value);
+            addData({dist: dist, cid: parseInt(center_id)});
+            updateCount();
+            startTimer();
+        }
+
+        window.addEventListener('load', initialize, false);
+
+    </script>
+</head>
+
+<body>
+    <div class="center">
+        <div class="vertical-layout">
+            <div class="row">
+                <form action="#" onsubmit="return false;"></form>
+                <div class="cell">District: <select id="dist_list"></select> Date: <input id="book_date" type="date" />
+                    <label>Only 18+ <input id="only_18" type="checkbox" checked /></label>
+                    <button onclick="search();">Search</button>
+                </div>
+                </form>
+            </div>
+            <div class="row" style="min-height: 500px;max-height: calc(100vh - 130px);overflow: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>SN</th>
+                            <th>Center</th>
+                            <th>Vaccine Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="result">
+                    </tbody>
+                </table>
+            </div>
+            <div class="row" style="display: flex;vertical-align: middle;">
+                <div id="total-centers" class="cell"></div>
+                <button style="margin-left:auto;" onclick="clearData();">Remove Notification</button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
