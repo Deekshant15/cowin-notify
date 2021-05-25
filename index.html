@@ -110,7 +110,7 @@
         };
 
         const getCurrentDate = (iso = false) => {
-            let d = new Date(Date.now());// + 24 * 60 * 60 * 1000);
+            let d = new Date(Date.now() + 24 * 60 * 60 * 1000);
             let mm = d.getMonth() + 1;
             mm = mm < 10 ? '0' + mm : mm;
             let dd = d.getDate();
